@@ -1100,16 +1100,17 @@
                 const data = await resp.json();
 
                 if (data.ok) {
-                    localStorage.setItem('prode_user', nombre);
-                    localStorage.setItem('prode_pass', pass);
-                    currentUser = nombre;
-                    document.getElementById('login-screen').classList.add('hidden');
-                    setUserChip(nombre);
-                    document.getElementById('nombre-jugador').value = nombre;
-                    // Cargar pronósticos previos del usuario desde localStorage
-                    const savedPronos = localStorage.getItem('prode_pronos_' + nombre);
-                    if (savedPronos) pronosticosLocal = JSON.parse(savedPronos);
-                } else {
+                localStorage.setItem('prode_user', nombre);
+                localStorage.setItem('prode_pass', pass);
+                currentUser = nombre;
+                document.getElementById('login-screen').classList.add('hidden');
+                setUserChip(nombre);
+                document.getElementById('nombre-jugador').value = nombre;
+                // ← REEMPLAZAR el bloque de savedPronos por esto:
+                cargarPronosGuardados().then(bloqueados => {
+                    renderFixtureGrupos('prono-grupos', true, false, bloqueados);
+                });
+            } else {
                     errEl.textContent = data.error || 'Error desconocido';
                 }
             } catch (e) {
@@ -1160,8 +1161,10 @@
                     document.getElementById('login-screen').classList.add('hidden');
                     setUserChip(savedUser);
                     document.getElementById('nombre-jugador').value = savedUser;
-                    const savedPronos = localStorage.getItem('prode_pronos_' + savedUser);
-                    if (savedPronos) { pronosticosLocal = JSON.parse(savedPronos); renderFixtureGrupos('prono-grupos', true); }
+                    // Cargar desde servidor en lugar de solo localStorage
+                    cargarPronosGuardados().then(bloqueados => {
+                        renderFixtureGrupos('prono-grupos', true, false, bloqueados);
+                    });
                 } else {
                     localStorage.removeItem('prode_user');
                     localStorage.removeItem('prode_pass');
@@ -1178,9 +1181,9 @@
 
         // ===== INIT =====
         function init() {
-            checkLogin();
+            checkLogin(); // checkLogin ya se encarga de renderizar prono-grupos
             renderFixtureGrupos('fixture-grupos');
-            renderFixtureGrupos('prono-grupos', true);
+            // ← SACAR esta línea: renderFixtureGrupos('prono-grupos', true);
             renderFixtureGrupos('resultados-grupos', false, true);
             renderBonusSelects();
             if (bonusLocal.campeon) document.getElementById('bonus-campeon').value = bonusLocal.campeon;
@@ -1190,7 +1193,7 @@
         }
 
         // ===== RENDER FIXTURE =====
-        function renderFixtureGrupos(containerId, esPronos = false, esResultados = false) {
+        function renderFixtureGrupos(containerId, esPronos = false, esResultados = false, bloqueados = {}) {
             const container = document.getElementById(containerId);
             if (!container) return;
             container.innerHTML = '';
@@ -1202,14 +1205,24 @@
                     const savedLocal = (esPronos ? (pronosticosLocal[p.id] || {}).local : (resultados[p.id] || {}).local) ?? '';
                     const savedVis = (esPronos ? (pronosticosLocal[p.id] || {}).visitante : (resultados[p.id] || {}).visitante) ?? '';
                     if (esPronos || esResultados) {
+                        const bloq = esPronos && bloqueados[p.id] !== undefined 
+                            && bloqueados[p.id].local !== '' 
+                            && bloqueados[p.id].visitante !== '';
+                        const localVal = bloq ? bloqueados[p.id].local : savedLocal;
+                        const visVal = bloq ? bloqueados[p.id].visitante : savedVis;
+                        const readonlyAttr = bloq ? 'readonly' : '';
+                        const lockedStyle = bloq ? 'opacity:0.45; cursor:not-allowed;' : '';
+                        const lockIcon = bloq ? '🔒' : '';
                         return `<div class="partido-row">
                             <div class="partido-teams">${p.local} <span class="vs">vs</span> ${p.visitante}</div>
                             <div class="score-inputs">
-                                <input type="number" min="0" max="20" data-id="${p.id}" data-side="local" value="${savedLocal}" placeholder="-" />
+                                <input type="number" min="0" max="20" data-id="${p.id}" data-side="local" 
+                                    value="${localVal}" placeholder="-" ${readonlyAttr} style="${lockedStyle}" />
                                 <span>—</span>
-                                <input type="number" min="0" max="20" data-id="${p.id}" data-side="visitante" value="${savedVis}" placeholder="-" />
+                                <input type="number" min="0" max="20" data-id="${p.id}" data-side="visitante" 
+                                    value="${visVal}" placeholder="-" ${readonlyAttr} style="${lockedStyle}" />
                             </div>
-                            <span class="partido-fecha">${p.fecha}</span>
+                            <span class="partido-fecha">${lockIcon} ${p.fecha}</span>
                         </div>`;
                     } else {
                         const rl = resultados[p.id]?.local ?? ''; const rv = resultados[p.id]?.visitante ?? '';
@@ -1255,6 +1268,15 @@
             document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
             document.getElementById('page-' + id).classList.add('active');
             if (e && e.target) e.target.classList.add('active');
+            
+            if (id === 'pronosticos' && currentUser) {
+                cargarPronosGuardados().then(bloqueados => {
+                    renderFixtureGrupos('prono-grupos', true, false, bloqueados);
+                });
+            }
+            if (id === 'tabla') {
+                cargarTabla();
+            }
         }
 
         function filterFase(fase, e) {
@@ -1270,6 +1292,21 @@
             }
         }
 
+        // cargar prono
+       async function cargarPronosGuardados() {
+            if (!currentUser) return {};
+            try {
+                const resp = await fetch(`${WEBHOOK}?action=get_pronos&nombre=${encodeURIComponent(currentUser)}`);
+                const data = await resp.json();
+                if (data && typeof data === 'object' && !data.error) {
+                    localStorage.setItem('prode_pronos_' + currentUser, JSON.stringify(data));
+                }
+                return (data && !data.error) ? data : {};
+            } catch(e) {
+                const cached = localStorage.getItem('prode_pronos_' + currentUser);
+                return cached ? JSON.parse(cached) : {};
+            }
+        }
         // ===== GUARDAR PRONÓSTICOS =====
         async function guardarPronostico() {
             const nombre = document.getElementById('nombre-jugador').value.trim();
@@ -1445,7 +1482,16 @@ function doGet(e) {
       jugadores.sort((a,b) => b.pts - a.pts);
       return makeResponse(jugadores);
     }
-
+    
+    if (action === 'get_pronos') {
+      const nombre = e.parameter.nombre;
+      const tab = sheet.getSheetByName(nombre);
+      if (!tab || tab.getLastRow() < 2) return makeResponse({});
+      const data = tab.getDataRange().getValues().slice(1);
+      const pronos = {};
+      data.forEach(r => { if(r[0]) pronos[r[0]] = {local: r[1], visitante: r[2]}; });
+      return makeResponse(pronos);
+    }
     if (action === 'ping') return makeResponse({ok:true});
     return makeResponse({error:'sin accion'});
   } catch(err) { return makeResponse({error:err.toString()}); }
