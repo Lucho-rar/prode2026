@@ -1079,6 +1079,7 @@
                 : 'Ingresá tu nombre y tu contraseña personal.';
             document.getElementById('login-error').textContent = '';
         }
+        
 
         async function doLogin() {
             const nombre = document.getElementById('login-nombre').value.trim();
@@ -1182,9 +1183,7 @@
         // ===== INIT =====
         function init() {
             checkLogin(); // checkLogin ya se encarga de renderizar prono-grupos
-            renderFixtureGrupos('fixture-grupos');
-            // ← SACAR esta línea: renderFixtureGrupos('prono-grupos', true);
-            renderFixtureGrupos('resultados-grupos', false, true);
+            cargarResultadosServidor();
             renderBonusSelects();
             if (bonusLocal.campeon) document.getElementById('bonus-campeon').value = bonusLocal.campeon;
             if (bonusLocal.subcampeon) document.getElementById('bonus-subcampeon').value = bonusLocal.subcampeon;
@@ -1328,18 +1327,33 @@
             } catch (e) { toast('Error de conexión', true); }
         }
 
-        // ===== GUARDAR RESULTADOS =====
         async function guardarResultados() {
-            const partidos = [];
-            Object.values(GRUPOS).forEach(g => g.partidos.forEach(p => {
-                const r = resultados[p.id] || {};
-                partidos.push({ id: p.id, local: r.local ?? '', visitante: r.visitante ?? '' });
-            }));
+        const partidos = [];
+        Object.values(GRUPOS).forEach(g => g.partidos.forEach(p => {
+            const r = resultados[p.id] || {};
+            partidos.push({ id: p.id, local: r.local ?? '', visitante: r.visitante ?? '' });
+        }));
+        try {
+            await fetch(WEBHOOK, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'guardar_resultados', partidos }) });
+            toast('Resultados guardados ✓');
+            cargarResultadosServidor(); // ← esto actualiza el fixture automáticamente
+        } catch (e) { toast('Error de conexión', true); }
+    }
+        // Cargar resultados desde el servidor al iniciar
+        async function cargarResultadosServidor() {
             try {
-                await fetch(WEBHOOK, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'guardar_resultados', partidos }) });
-                toast('Resultados guardados ✓');
-                renderFixtureGrupos('fixture-grupos');
-            } catch (e) { toast('Error de conexión', true); }
+                const resp = await fetch(`${WEBHOOK}?action=get_resultados`);
+                const data = await resp.json();
+                if (data && !data.error) {
+                    resultados = data;
+                    localStorage.setItem('prode_resultados', JSON.stringify(data));
+                }
+            } catch(e) {
+                // Sin conexión: usar localStorage
+                resultados = JSON.parse(localStorage.getItem('prode_resultados') || '{}');
+            }
+            renderFixtureGrupos('fixture-grupos');
+            renderFixtureGrupos('resultados-grupos', false, true);
         }
 
         // ===== TABLA =====
